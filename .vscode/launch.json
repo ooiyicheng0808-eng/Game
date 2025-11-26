@@ -1,0 +1,520 @@
+import React, { useState, useEffect, useMemo } from 'react';
+
+// Firebase Imports
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
+import { getFirestore, doc, setDoc, updateDoc, onSnapshot, collection, query, limit, getDocs } from 'firebase/firestore';
+
+// --- CONFIGURATION AND SETUP ---
+const useFirebase = () => {
+    const [db, setDb] = useState(null);
+    const [auth, setAuth] = useState(null);
+    const [currentUser, setCurrentUser] = useState(null);
+    const [isAuthReady, setIsAuthReady] = useState(false);
+
+    useEffect(() => {
+        try {
+            // Retrieve global variables provided by the Canvas environment
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+            if (!firebaseConfig) {
+                console.error("Firebase config not available. Check environment setup.");
+                return;
+            }
+
+            const app = initializeApp(firebaseConfig);
+            const firestore = getFirestore(app);
+            const authInstance = getAuth(app);
+            
+            setDb(firestore);
+            setAuth(authInstance);
+
+            // Authentication Listener and Initial Sign-in
+            const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
+                if (!user) {
+                    // Sign-in logic: Use custom token if available, otherwise sign in anonymously
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(authInstance, initialAuthToken);
+                        } else {
+                            await signInAnonymously(authInstance);
+                        }
+                    } catch (error) {
+                        console.error("Initial sign-in failed:", error);
+                        // Fallback to anonymous if custom token fails
+                        await signInAnonymously(authInstance); 
+                    }
+                }
+                // Once authenticated (either new or existing session)
+                setCurrentUser(authInstance.currentUser);
+                setIsAuthReady(true);
+            });
+
+            return () => unsubscribe();
+
+        } catch (error) {
+            console.error("Error during Firebase initialization or auth:", error);
+            setIsAuthReady(true);
+        }
+    }, []);
+
+    // Helper to check if the user is signed in with email/password (not anonymous)
+    // This differentiates a guest (anonymous) from a permanent player (logged in)
+    const isPermanentUser = currentUser?.providerData?.some(p => p.providerId === 'password');
+
+    return { db, auth, currentUser, isAuthReady, isPermanentUser };
+};
+
+// --- DATA MANAGEMENT AND UTILITIES ---
+const COLLECTION_PATH = (appId) => `/artifacts/${appId}/public/data/leaderboard`;
+
+/**
+ * Ensures the current user's data exists in the leaderboard collection.
+ * This function handles both creating new users and updating existing ones (e.g., when an anonymous user signs up).
+ */
+const ensureUserData = async (db, userId, email = null) => {
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    if (!db || !userId || !appId) return;
+
+    try {
+        const userDocRef = doc(db, COLLECTION_PATH(appId), userId);
+        
+        const updateData = {
+            userId: userId,
+            // Use email prefix as username, or Guest ID if anonymous
+            username: email ? email.split('@')[0] : `Guest_${userId.substring(0, 6)}`,
+            email: email, 
+            eloRating: 1000, 
+            tokensEarned: 0, 
+            lastActivity: new Date().toISOString(),
+        };
+
+        // setDoc with merge: true ensures we don't overwrite existing ELO/Tokens if they were guest
+        await setDoc(userDocRef, updateData, { merge: true });
+    } catch (error) {
+        console.error("Error ensuring user data:", error);
+    }
+};
+
+// --- AUTHENTICATION COMPONENT (Your main focus area) ---
+const AuthForm = ({ auth, onLoginSuccess }) => {
+    const [isLoginMode, setIsLoginMode] = useState(true);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const MIN_PASSWORD_LENGTH = 8; 
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError(null);
+        setIsLoading(true);
+
+        // Client-side validation check
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+            setIsLoading(false);
+            return;
+        }
+
+        try {
+            if (isLoginMode) {
+                // Log In existing user
+                await signInWithEmailAndPassword(auth, email, password);
+                onLoginSuccess();
+            } else {
+                // Sign Up new user
+                await createUserWithEmailAndPassword(auth, email, password);
+                onLoginSuccess();
+            }
+        } catch (err) {
+            console.error("Auth Error:", err);
+            // Frontend validation and error messages
+            if (err.code === 'auth/email-already-in-use') {
+                setError("Email already in use. Try logging in?");
+            } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+                setError("Invalid email or password.");
+            } else if (err.code === 'auth/weak-password') {
+                setError(`Password should be at least ${MIN_PASSWORD_LENGTH} characters.`);
+            } else {
+                setError("An unknown error occurred. Please try again.");
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    
+    return (
+        <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 p-4">
+            <div className="w-full max-w-sm p-6 bg-gray-800 rounded-2xl shadow-2xl border border-yellow-500/30">
+                <h2 className="text-3xl font-bold text-center mb-6 text-yellow-400">
+                    {/* UPDATED TITLE */}
+                    {isLoginMode ? 'Log In to Play Chess Game' : 'Sign Up to Play Chess Game'}
+                </h2>
+                <p className="text-sm text-center text-gray-400 mb-6">
+                    Create an account to save your ELO and bind your OneWallet for token rewards.
+                </p>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <input
+                        type="email"
+                        placeholder="Email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg border border-gray-600 focus:ring-yellow-500 focus:border-yellow-500 transition duration-150"
+                    />
+                    <input
+                        type="password"
+                        // FIXED: Removed the inline JSX comment to prevent the compilation error.
+                        placeholder={`Password (min ${MIN_PASSWORD_LENGTH} chars)`} 
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg border border-gray-600 focus:ring-yellow-500 focus:border-yellow-500 transition duration-150"
+                    />
+
+                    {error && (
+                        <div className="text-sm p-3 bg-red-900/50 text-red-300 rounded-lg border border-red-500">
+                            {error}
+                        </div>
+                    )}
+
+                    <button
+                        type="submit"
+                        disabled={isLoading || password.length < MIN_PASSWORD_LENGTH} 
+                        className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 text-gray-900 font-bold rounded-lg shadow-lg shadow-yellow-500/30 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isLoading ? 'Processing...' : isLoginMode ? 'Log In' : 'Sign Up'}
+                    </button>
+                </form>
+
+                <div className="mt-6 text-center">
+                    <button
+                        onClick={() => {
+                            setIsLoginMode(!isLoginMode);
+                            setError(null);
+                        }}
+                        className="text-sm text-yellow-400 hover:text-yellow-300 transition duration-150"
+                    >
+                        {isLoginMode ? "Need an account? Sign Up" : "Already have an account? Log In"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- GAME COMPONENTS (Simplified) ---
+
+const Header = ({ userId, tokens, isPermanentUser, onSignOut }) => (
+    <div className="flex justify-between items-center p-4 bg-gray-800 border-b border-yellow-500/20"> 
+        <h1 className="text-2xl font-extrabold text-yellow-400">ChessFi: OneHack 2.0</h1> 
+        <div className="text-right text-sm">
+            <p className="text-gray-300">Wallet ID (User ID):</p>
+            <p className="font-mono text-xs text-yellow-300 truncate w-32 md:w-full">{userId || "Connecting..."}</p> 
+            <p className="text-lg font-bold text-yellow-400 mt-1">{tokens.toFixed(2)} ONE-TOKEN</p>
+            {isPermanentUser && (
+                <button 
+                    onClick={onSignOut}
+                    className="text-xs text-red-400 hover:text-red-300 mt-1"
+                >
+                    Sign Out
+                </button>
+            )}
+        </div>
+    </div>
+);
+
+const Leaderboard = ({ leaderboardData }) => {
+    const topFive = useMemo(() => {
+        return leaderboardData
+            .sort((a, b) => b.eloRating - a.eloRating)
+            .slice(0, 5);
+    }, [leaderboardData]);
+
+    return (
+        <div className="bg-gray-700 p-4 rounded-xl shadow-2xl mt-4">
+            <h2 className="text-xl font-semibold text-white mb-3 flex items-center">
+                <svg className="w-6 h-6 mr-2 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.243.588 1.81l-3.974 2.887a1 1 0 00-.363 1.118l1.519 4.674c.3.921-.755 1.688-1.54 1.118l-3.974-2.887a1 1 0 00-1.176 0l-3.974 2.887c-.785.57-1.84-.197-1.54-1.118l1.519-4.674a1 1 0 00-.363-1.118l-3.974-2.887c-.783-.567-.381-1.81.588-1.81h4.915a1 1 0 00.95-.69l1.519-4.674z"></path></svg>
+                Ranked Leaderboard (Top 5 Rewards)
+            </h2>
+            <div className="text-sm text-gray-400 mb-2">Refreshes bi-weekly for token distribution.</div>
+            <div className="space-y-2">
+                {topFive.length === 0 ? (
+                    <p className="text-center text-gray-400">Loading rankings...</p>
+                ) : (
+                    topFive.map((player, index) => (
+                        <div key={player.userId} className={`flex justify-between items-center p-3 rounded-lg ${index < 3 ? 'bg-yellow-900/40 border border-yellow-500' : 'bg-gray-800'}`}>
+                            <span className={`font-extrabold w-6 text-center ${index === 0 ? 'text-yellow-300 text-lg' : index === 1 ? 'text-gray-300' : index === 2 ? 'text-yellow-600' : 'text-gray-400'}`}>#{index + 1}</span>
+                            <span className="flex-1 font-semibold text-white truncate px-2">{player.username}</span>
+                            <span className="text-lg font-mono text-yellow-400">{player.eloRating} ELO</span> 
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+};
+
+// Simplified component to simulate game flow and updates
+const GameSimulator = ({ db, userId, onGameAction }) => {
+    const [status, setStatus] = useState('Ready for match');
+    const [opponent, setOpponent] = useState('');
+
+    const simulateMatch = async (win) => {
+        if (!userId || !db) return;
+        setStatus('Match in progress...');
+        
+        const mockOpponent = `Opponent_${Math.random().toString(36).substring(2, 8)}`;
+        setOpponent(mockOpponent);
+
+        await new Promise(resolve => setTimeout(resolve, 2000)); 
+
+        const eloChange = win ? 35 : -25;
+        
+        try {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const userDocRef = doc(db, COLLECTION_PATH(appId), userId);
+            
+            // NOTE: In a real app, this ELO update would be secured by Firestore Rules
+            await updateDoc(userDocRef, {
+                eloRating: (onGameAction.currentElo || 1000) + eloChange,
+                lastActivity: new Date().toISOString(),
+            });
+
+            setStatus(win ? 'VICTORY! ELO Increased.' : 'DEFEAT. ELO Decreased.');
+            setOpponent('');
+
+        } catch (error) {
+            console.error("Error updating match result:", error);
+            setStatus('Error updating score.');
+        }
+    };
+
+    const handleRewardCycle = async () => {
+        if (!db) return;
+        setStatus('Processing Bi-Weekly Rewards...');
+
+        try {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const q = collection(db, COLLECTION_PATH(appId));
+            const snapshot = await getDocs(q);
+            
+            let allPlayers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Sort in memory and take top 5 (since we avoid Firestore orderBy for simplicity)
+            allPlayers.sort((a, b) => b.eloRating - a.eloRating);
+            const topFive = allPlayers.slice(0, 5);
+
+            let rewardTotal = 0;
+
+            for (let i = 0; i < topFive.length; i++) {
+                const player = topFive[i];
+                const rewardAmount = (5 - i) * 10; // Simple reward: 50, 40, 30, 20, 10 tokens
+                
+                // NOTE: This update simulates the token award. 
+                // In a real GameFi app, this would involve a secure server function 
+                // making a transaction using the OneChain SDK to the player's OneWallet address.
+                await updateDoc(doc(db, COLLECTION_PATH(appId), player.userId), {
+                    tokensEarned: (player.tokensEarned || 0) + rewardAmount,
+                    lastRewardCycle: new Date().toISOString(),
+                });
+                if (player.userId === userId) {
+                    rewardTotal = rewardAmount;
+                }
+            }
+            
+            setStatus(`Reward Cycle Complete! ${rewardTotal > 0 ? `You earned ${rewardTotal} tokens.` : 'Not in top 5.'}`);
+        } catch (error) {
+            console.error("Error during reward cycle:", error);
+            setStatus('Error during reward cycle processing.');
+        }
+    };
+
+    return (
+        <div className="mt-8 p-6 bg-gray-800 rounded-xl shadow-2xl">
+            <h2 className="text-xl font-semibold text-white mb-4">PVP Ranked Match Arena</h2>
+            
+            {opponent && <div className="text-center text-red-400 font-bold mb-3 animate-pulse">Playing vs {opponent}</div>}
+            
+            <div className="flex justify-around space-x-4">
+                <button
+                    onClick={() => simulateMatch(true)}
+                    disabled={status.includes('progress') || !userId}
+                    className="flex-1 px-4 py-3 bg-yellow-600 hover:bg-yellow-700 text-gray-900 font-bold rounded-lg shadow-lg transition duration-200 disabled:opacity-50" 
+                >
+                    {status.includes('progress') ? 'Playing...' : 'Simulate Win'}
+                </button>
+                <button
+                    onClick={() => simulateMatch(false)}
+                    disabled={status.includes('progress') || !userId}
+                    className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg shadow-lg transition duration-200 disabled:opacity-50"
+                >
+                    {status.includes('progress') ? 'Playing...' : 'Simulate Loss'}
+                </button>
+            </div>
+
+            <div className="text-center mt-4 p-3 bg-gray-700 rounded text-sm text-gray-200">
+                <p className="font-semibold">{status}</p>
+            </div>
+
+            <button
+                onClick={handleRewardCycle}
+                disabled={status.includes('progress') || !userId}
+                className="w-full mt-6 px-4 py-3 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold rounded-lg shadow-lg transition duration-200 disabled:opacity-50"
+            >
+                Simulate Bi-Weekly Reward Cycle
+            </button>
+        </div>
+    );
+};
+
+
+// --- MAIN APP COMPONENT ---
+
+const App = () => {
+    const { db, auth, currentUser, isAuthReady, isPermanentUser } = useFirebase();
+    const [leaderboard, setLeaderboard] = useState([]);
+    const [userTokens, setUserTokens] = useState(0);
+    const [userElo, setUserElo] = useState(1000);
+    
+    const userId = currentUser?.uid;
+
+    // Handle Sign Out
+    const handleSignOut = async () => {
+        try {
+            await signOut(auth);
+        } catch(error) {
+            console.error("Sign out error:", error);
+        }
+    };
+
+    // Handle successful login/signup (updates Firestore profile)
+    const handleAuthSuccess = async () => {
+        // Wait for the auth state to update before trying to access the new user's email/uid
+        const user = auth.currentUser;
+        if (db && user && user.email) {
+            // Re-run ensureUserData to update the profile with the permanent email/username
+            await ensureUserData(db, user.uid, user.email);
+        }
+    }
+
+    // 1. Data Listener: Fetches Leaderboard and User Profile in real-time
+    useEffect(() => {
+        if (!isAuthReady || !db || !userId) return;
+
+        // Ensure user's profile exists/is updated immediately after auth change
+        ensureUserData(db, userId, currentUser?.email);
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const q = collection(db, COLLECTION_PATH(appId));
+
+        // Attach real-time listener to the public leaderboard collection
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setLeaderboard(data);
+
+            // Extract current user's data from the full dataset
+            const currentUserData = data.find(p => p.userId === userId);
+            if (currentUserData) {
+                setUserTokens(currentUserData.tokensEarned || 0);
+                setUserElo(currentUserData.eloRating || 1000);
+            }
+        }, (error) => {
+            console.error("Firestore Leaderboard Listener failed:", error);
+        });
+
+        return () => unsubscribe();
+    }, [isAuthReady, db, userId, currentUser?.email]);
+
+    const gameActionRef = React.useRef({ currentElo: userElo });
+    gameActionRef.current.currentElo = userElo;
+
+    if (!isAuthReady) {
+        return (
+            <div className="flex items-center justify-center h-screen bg-gray-900 text-yellow-400"> 
+                <p className="animate-pulse">Connecting to OneChain Auth & Firestore...</p>
+            </div>
+        );
+    }
+    
+    // If user is not permanently signed in (i.e., they are anonymous), show the Auth Form
+    if (!isPermanentUser) {
+        return <AuthForm auth={auth} onLoginSuccess={handleAuthSuccess} />;
+    }
+
+    // --- Main Game Content (Only shown after successful permanent login/signup) ---
+    return (
+        <div className="min-h-screen bg-gray-900 font-sans">
+            <script src="https://cdn.tailwindcss.com"></script>
+            <style jsx>{`
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+                body { font-family: 'Inter', sans-serif; }
+                /* Chess board styling for responsive square cells */
+                .chess-cell {
+                    aspect-ratio: 1 / 1;
+                    width: 12.5%; /* 1/8th of the width for an 8x8 board */
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 20px;
+                }
+            `}</style>
+
+            <Header 
+                userId={userId} 
+                tokens={userTokens} 
+                isPermanentUser={isPermanentUser} 
+                onSignOut={handleSignOut}
+            />
+
+            <main className="p-4 md:p-8 max-w-4xl mx-auto">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Left Column: Game & ELO */}
+                    <div>
+                        <div className="bg-gray-800 p-6 rounded-xl shadow-2xl">
+                            <h2 className="text-2xl font-bold text-white mb-4">Your Rank: {userElo} ELO</h2>
+                            <p className="text-gray-400 mb-4">PVP Ranked matches determine your ELO. Top 5 ELO ratings receive token rewards every two weeks.</p>
+                            
+                            <div className="flex flex-wrap border-2 border-gray-700 rounded-lg overflow-hidden">
+                                {/* Simple Chess Board Representation (Game Logic Developer focus) */}
+                                {Array(64).fill(0).map((_, i) => {
+                                    const isLight = (Math.floor(i / 8) % 2) === (i % 2);
+                                    return (
+                                        <div 
+                                            key={i} 
+                                            className={`chess-cell ${isLight ? 'bg-amber-100' : 'bg-amber-800'}`}
+                                        >
+                                            {/* Pieces will go here */}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {db && userId && (
+                            <GameSimulator 
+                                db={db} 
+                                userId={userId} 
+                                onGameAction={gameActionRef} 
+                            />
+                        )}
+                    </div>
+                    
+                    {/* Right Column: Leaderboard */}
+                    <div className="lg:sticky lg:top-8">
+                        <Leaderboard leaderboardData={leaderboard} />
+                    </div>
+                </div>
+                
+                <footer className="mt-10 pt-4 border-t border-gray-700 text-center text-sm text-gray-500">
+                    <p>Built for OneChain OneHack 2.0. Game logic simulated using Firebase Firestore for persistent ranking and token rewards.</p>
+                </footer>
+            </main>
+        </div>
+    );
+};
+
+export default App;
