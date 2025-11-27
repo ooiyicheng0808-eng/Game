@@ -124,7 +124,6 @@ const ensureUserData = async (db, userId, email = null, wallet = null) => {
 
 // --- UI COMPONENTS ---
 
-// --- INFO POPUP MODAL ---
 const InfoModal = ({ isOpen, onClose }) => {
     if (!isOpen) return null;
     return (
@@ -132,24 +131,10 @@ const InfoModal = ({ isOpen, onClose }) => {
             <div className="bg-gray-900 p-6 rounded-2xl shadow-2xl border-2 border-blue-500 w-80 relative">
                 <button onClick={onClose} className="absolute top-3 right-3 text-gray-400 hover:text-white text-2xl">&times;</button>
                 <h4 className="text-blue-400 font-bold text-lg mb-4 text-center uppercase tracking-wider">Reward System</h4>
-                
                 <div className="space-y-4 text-sm text-gray-300">
-                    <div>
-                        <strong className="text-white block mb-1">🌀 What is Transcend?</strong>
-                        <p className="opacity-80">Transcending resets your Level and Essence (Temporary Progress) to 0, but permanently adds your Score to the On-Chain Leaderboard.</p>
-                    </div>
-                    
-                    <div>
-                        <strong className="text-white block mb-1">⏳ Season Reset</strong>
-                        <p className="opacity-80">Leaderboard resets every 14 days. Top players at the end of the season win real prizes.</p>
-                    </div>
-
-                    <div className="bg-black/40 p-3 rounded border border-yellow-500/20">
-                        <strong className="text-yellow-400 block mb-2 text-center">🏆 Season Prize Pool</strong>
-                        <div className="flex justify-between"><span>🥇 1st Place:</span> <span className="text-white font-mono">$500</span></div>
-                        <div className="flex justify-between"><span>🥈 2nd Place:</span> <span className="text-white font-mono">$250</span></div>
-                        <div className="flex justify-between"><span>🥉 3rd Place:</span> <span className="text-white font-mono">$100</span></div>
-                    </div>
+                    <div><strong className="text-white block mb-1">🌀 What is Transcend?</strong><p className="opacity-80">Transcending resets your Level and Essence (Temporary Progress) to 0, but permanently adds your Score to the On-Chain Leaderboard.</p></div>
+                    <div><strong className="text-white block mb-1">⏳ Season Reset</strong><p className="opacity-80">Leaderboard resets every 14 days. Top players at the end of the season win real prizes.</p></div>
+                    <div className="bg-black/40 p-3 rounded border border-yellow-500/20"><strong className="text-yellow-400 block mb-2 text-center">🏆 Season Prize Pool</strong><div className="flex justify-between"><span>🥇 1st Place:</span> <span className="text-white font-mono">$500</span></div><div className="flex justify-between"><span>🥈 2nd Place:</span> <span className="text-white font-mono">$250</span></div><div className="flex justify-between"><span>🥉 3rd Place:</span> <span className="text-white font-mono">$100</span></div></div>
                 </div>
                 <button onClick={onClose} className="mt-6 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-lg transition">Got it!</button>
             </div>
@@ -157,43 +142,24 @@ const InfoModal = ({ isOpen, onClose }) => {
     );
 };
 
-// --- UPDATED LEADERBOARD (FIXED SORTING) ---
 const Leaderboard = ({ leaderboardData, onClick, onInfoClick }) => {
-    // --- FIX: Sort by OnChain Score FIRST, then Level ---
     const topThree = useMemo(() => {
         return [...leaderboardData].sort((a, b) => {
-            // Primary Sort: OnChain Evolution Level (Permanent Score)
             const scoreDiff = (b.onChainEvolutionLevel || 0) - (a.onChainEvolutionLevel || 0);
             if (scoreDiff !== 0) return scoreDiff;
-            // Secondary Sort: Current Session Level
             return (b.level || 0) - (a.level || 0);
         }).slice(0, 3);
     }, [leaderboardData]);
     
     return (
         <div className="absolute top-24 right-4 z-10 flex flex-col items-end">
-            <div 
-                onClick={onClick}
-                className="w-64 bg-black/50 p-4 rounded-2xl shadow-lg border-2 border-purple-400/30 backdrop-blur-sm cursor-pointer hover:bg-black/70 transition-colors group relative"
-            >
-                <h3 className="text-lg font-extrabold text-yellow-400 mb-3 text-center tracking-wide flex items-center justify-center">
-                    <span className="mr-2">👑</span> SHAKERS
-                    <button 
-                        onClick={(e) => {
-                            e.stopPropagation(); 
-                            onInfoClick();
-                        }}
-                        className="ml-2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-700 text-white text-xs hover:bg-blue-500 transition-colors z-50"
-                    >
-                        ?
-                    </button>
-                </h3>
+            <div onClick={onClick} className="w-64 bg-black/50 p-4 rounded-2xl shadow-lg border-2 border-purple-400/30 backdrop-blur-sm cursor-pointer hover:bg-black/70 transition-colors group relative">
+                <h3 className="text-lg font-extrabold text-yellow-400 mb-3 text-center tracking-wide flex items-center justify-center"><span className="mr-2">👑</span> SHAKERS<button onClick={(e) => { e.stopPropagation(); onInfoClick(); }} className="ml-2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-700 text-white text-xs hover:bg-blue-500 transition-colors z-50">?</button></h3>
                 <div className="space-y-2">
                     {topThree.length === 0 ? <p className="text-gray-300 text-sm text-center">Be the first shaker!</p> : topThree.map((p, i) => (
                         <div key={p.id} className="flex items-center p-2 rounded bg-black/30">
                             <span className="w-6 text-center font-bold text-yellow-300">#{i + 1}</span>
                             <span className="flex-1 ml-2 font-semibold text-white truncate">{p.username}</span>
-                            {/* FIX: Show OnChain Score if > 0, otherwise Level */}
                             <span className="text-purple-300 font-mono text-xs">
                                 {p.onChainEvolutionLevel > 0 ? `⛓️ ${(p.onChainEvolutionLevel/1000).toFixed(1)}k` : `Lv ${p.level || 1}`}
                             </span>
@@ -206,11 +172,8 @@ const Leaderboard = ({ leaderboardData, onClick, onInfoClick }) => {
     );
 };
 
-// --- UPDATED LEADERBOARD MODAL (FIXED SORTING) ---
 const LeaderboardModal = ({ isOpen, onClose, leaderboardData }) => {
     if (!isOpen) return null;
-    
-    // --- FIX: Sort by OnChain Score FIRST ---
     const sorted = [...leaderboardData].sort((a, b) => {
         const scoreDiff = (b.onChainEvolutionLevel || 0) - (a.onChainEvolutionLevel || 0);
         if (scoreDiff !== 0) return scoreDiff;
@@ -229,9 +192,7 @@ const LeaderboardModal = ({ isOpen, onClose, leaderboardData }) => {
                             <div className="col-span-2 text-center font-bold text-xl">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : <span className="text-gray-500 text-sm">#{i + 1}</span>}</div>
                             <div className="col-span-6 font-semibold text-white truncate flex items-center">{p.username}</div>
                             <div className="col-span-2 text-center text-gray-400 font-mono font-bold text-sm">Lv {p.level || 1}</div>
-                            <div className="col-span-2 text-right text-purple-300 text-xs font-mono font-bold">
-                                {(p.onChainEvolutionLevel || 0).toLocaleString()}
-                            </div>
+                            <div className="col-span-2 text-right text-purple-300 text-xs font-mono font-bold">{(p.onChainEvolutionLevel || 0).toLocaleString()}</div>
                         </div>
                     ))}
                  </div>
@@ -435,12 +396,19 @@ const App = () => {
 
     useEffect(() => {
         if (appState !== 'GAME' || !db || !currentUser) return;
-        const unsubscribe = onSnapshot(doc(db, COLLECTION_PATH(LOCAL_APP_ID), currentUser.uid), (doc) => {
-            if (doc.exists()) {
-                const data = doc.data();
+        const userRef = doc(db, COLLECTION_PATH(LOCAL_APP_ID), currentUser.uid);
+        const unsubscribe = onSnapshot(userRef, (docSnapshot) => {
+            if (docSnapshot.exists()) {
+                const data = docSnapshot.data();
+                const currentTotal = data.totalEssenceEarned || 0;
+                
+                // --- 1. CALCULATE CORRECT LEVEL LOCALLY ---
+                const calculatedLevel = getLevelFromEssence(currentTotal);
+
+                // --- 2. UPDATE STATE ---
                 setUserEssence(data.essence || 0);
-                setUserLevel(getLevelFromEssence(data.totalEssenceEarned || 0)); 
-                setTotalEssenceEarned(data.totalEssenceEarned || 0);
+                setUserLevel(calculatedLevel); 
+                setTotalEssenceEarned(currentTotal);
                 setOnChainEvolutionLevel(data.onChainEvolutionLevel || 0);
                 setUserUpgrades(data.upgrades || { shake: 0, brewery: 0 });
                 setUserArtifacts(data.artifacts || []);
@@ -455,7 +423,17 @@ const App = () => {
                 const { essence_per_second, essence_per_pixel } = recalculateMultipliers(data.upgrades || {}, data.equippedArtifact || null);
                 setEssencePerSecond(essence_per_second);
                 setEssencePerPixel(essence_per_pixel);
-            } else { ensureUserData(db, currentUser.uid, currentUser.email); }
+
+                // --- 3. CRITICAL FIX: SYNC LEVEL TO DB IF MISMATCHED ---
+                // This ensures the Leaderboard (which reads from DB) matches the player's actual level
+                if (data.level !== calculatedLevel) {
+                    // "Quietly" update the level in the background so the leaderboard fixes itself
+                    updateDoc(userRef, { level: calculatedLevel }).catch(e => console.error("Level sync error:", e));
+                }
+
+            } else { 
+                ensureUserData(db, currentUser.uid, currentUser.email); 
+            }
         });
         return () => unsubscribe();
     }, [appState, db, currentUser]); 
@@ -572,11 +550,11 @@ const App = () => {
                 userArtifacts={userArtifacts} 
                 equippedArtifact={equippedArtifact} 
                 unlockedBackgrounds={unlockedBackgrounds} 
-                equippedBackground={equippedBackground}
-                unlockedBottles={unlockedBottles}
-                equippedBottle={equippedBottle}
-                unlockedSkins={unlockedSkins}
-                equippedSkin={equippedSkin}
+                equippedBackground={equippedBackground} 
+                unlockedBottles={unlockedBottles} 
+                equippedBottle={equippedBottle} 
+                unlockedSkins={unlockedSkins} 
+                equippedSkin={equippedSkin} 
             />
             <button onClick={handleSignOut} className="absolute bottom-4 left-4 bg-red-600 text-white text-xs font-bold py-1 px-3 rounded-lg shadow-lg z-10">Sign Out</button>
         </div>
