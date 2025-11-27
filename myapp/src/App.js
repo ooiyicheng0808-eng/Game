@@ -124,7 +124,7 @@ const ensureUserData = async (db, userId, email = null, wallet = null) => {
 
 // --- UI COMPONENTS ---
 
-// --- NEW: INFO POPUP MODAL ---
+// --- INFO POPUP MODAL ---
 const InfoModal = ({ isOpen, onClose }) => {
     if (!isOpen) return null;
     return (
@@ -157,8 +157,18 @@ const InfoModal = ({ isOpen, onClose }) => {
     );
 };
 
+// --- UPDATED LEADERBOARD (FIXED SORTING) ---
 const Leaderboard = ({ leaderboardData, onClick, onInfoClick }) => {
-    const topThree = useMemo(() => [...leaderboardData].sort((a, b) => ((b.level || 0) - (a.level || 0)) || ((b.totalEssenceEarned || 0) - (a.totalEssenceEarned || 0))).slice(0, 3), [leaderboardData]);
+    // --- FIX: Sort by OnChain Score FIRST, then Level ---
+    const topThree = useMemo(() => {
+        return [...leaderboardData].sort((a, b) => {
+            // Primary Sort: OnChain Evolution Level (Permanent Score)
+            const scoreDiff = (b.onChainEvolutionLevel || 0) - (a.onChainEvolutionLevel || 0);
+            if (scoreDiff !== 0) return scoreDiff;
+            // Secondary Sort: Current Session Level
+            return (b.level || 0) - (a.level || 0);
+        }).slice(0, 3);
+    }, [leaderboardData]);
     
     return (
         <div className="absolute top-24 right-4 z-10 flex flex-col items-end">
@@ -168,11 +178,10 @@ const Leaderboard = ({ leaderboardData, onClick, onInfoClick }) => {
             >
                 <h3 className="text-lg font-extrabold text-yellow-400 mb-3 text-center tracking-wide flex items-center justify-center">
                     <span className="mr-2">👑</span> SHAKERS
-                    {/* QUESTION MARK BUTTON - Triggers Info Modal */}
                     <button 
                         onClick={(e) => {
                             e.stopPropagation(); 
-                            onInfoClick(); // Open separate modal
+                            onInfoClick();
                         }}
                         className="ml-2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-700 text-white text-xs hover:bg-blue-500 transition-colors z-50"
                     >
@@ -181,7 +190,14 @@ const Leaderboard = ({ leaderboardData, onClick, onInfoClick }) => {
                 </h3>
                 <div className="space-y-2">
                     {topThree.length === 0 ? <p className="text-gray-300 text-sm text-center">Be the first shaker!</p> : topThree.map((p, i) => (
-                        <div key={p.id} className="flex items-center p-2 rounded bg-black/30"><span className="w-6 text-center font-bold text-yellow-300">#{i + 1}</span><span className="flex-1 ml-2 font-semibold text-white truncate">{p.username}</span><span className="text-purple-300 font-mono">Lv {p.level || 1}</span></div>
+                        <div key={p.id} className="flex items-center p-2 rounded bg-black/30">
+                            <span className="w-6 text-center font-bold text-yellow-300">#{i + 1}</span>
+                            <span className="flex-1 ml-2 font-semibold text-white truncate">{p.username}</span>
+                            {/* FIX: Show OnChain Score if > 0, otherwise Level */}
+                            <span className="text-purple-300 font-mono text-xs">
+                                {p.onChainEvolutionLevel > 0 ? `⛓️ ${(p.onChainEvolutionLevel/1000).toFixed(1)}k` : `Lv ${p.level || 1}`}
+                            </span>
+                        </div>
                     ))}
                 </div>
                 <div className="text-center text-yellow-500/80 text-xs mt-3 font-bold group-hover:text-yellow-300 transition-colors">CLICK TO VIEW ALL ➜</div>
@@ -190,22 +206,32 @@ const Leaderboard = ({ leaderboardData, onClick, onInfoClick }) => {
     );
 };
 
+// --- UPDATED LEADERBOARD MODAL (FIXED SORTING) ---
 const LeaderboardModal = ({ isOpen, onClose, leaderboardData }) => {
     if (!isOpen) return null;
-    const sorted = [...leaderboardData].sort((a, b) => ((b.level || 0) - (a.level || 0)) || ((b.totalEssenceEarned || 0) - (a.totalEssenceEarned || 0)));
+    
+    // --- FIX: Sort by OnChain Score FIRST ---
+    const sorted = [...leaderboardData].sort((a, b) => {
+        const scoreDiff = (b.onChainEvolutionLevel || 0) - (a.onChainEvolutionLevel || 0);
+        if (scoreDiff !== 0) return scoreDiff;
+        return (b.level || 0) - (a.level || 0);
+    });
+
     return (
         <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-[60] backdrop-blur-md">
             <div className="bg-gray-900 p-6 rounded-2xl shadow-2xl border-2 border-yellow-500 w-full max-w-2xl h-[80vh] flex flex-col relative">
                  <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white text-2xl font-bold transition-colors">&times;</button>
                  <h2 className="text-3xl font-extrabold text-yellow-400 text-center mb-6 tracking-wider flex items-center justify-center"><span className="mr-2">🏆</span> GLOBAL RANKINGS</h2>
                  <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
-                    <div className="grid grid-cols-12 gap-2 text-gray-400 font-bold text-xs uppercase mb-2 px-3"><div className="col-span-2 text-center">Rank</div><div className="col-span-6">Player</div><div className="col-span-2 text-center">Level</div><div className="col-span-2 text-right">Total Essence</div></div>
+                    <div className="grid grid-cols-12 gap-2 text-gray-400 font-bold text-xs uppercase mb-2 px-3"><div className="col-span-2 text-center">Rank</div><div className="col-span-6">Player</div><div className="col-span-2 text-center">Level</div><div className="col-span-2 text-right">Lifetime Score</div></div>
                     {sorted.map((p, i) => (
                         <div key={p.id} className={`grid grid-cols-12 gap-2 items-center p-3 rounded-lg transition-colors ${i < 3 ? 'bg-yellow-900/20 border border-yellow-500/30' : 'bg-gray-800/40 hover:bg-gray-700/40'}`}>
                             <div className="col-span-2 text-center font-bold text-xl">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : <span className="text-gray-500 text-sm">#{i + 1}</span>}</div>
-                            <div className="col-span-6 font-semibold text-white truncate flex items-center">{p.username} {p.onChainEvolutionLevel > 0 && <span className="ml-2 text-[10px] bg-purple-900/80 text-purple-300 px-1.5 py-0.5 rounded border border-purple-500/30" title="Transcended">⛓️ {p.onChainEvolutionLevel.toLocaleString()}</span>}</div>
-                            <div className="col-span-2 text-center text-purple-300 font-mono font-bold text-sm">Lv {p.level || 1}</div>
-                            <div className="col-span-2 text-right text-gray-400 text-xs font-mono">{(p.totalEssenceEarned || 0).toLocaleString()}</div>
+                            <div className="col-span-6 font-semibold text-white truncate flex items-center">{p.username}</div>
+                            <div className="col-span-2 text-center text-gray-400 font-mono font-bold text-sm">Lv {p.level || 1}</div>
+                            <div className="col-span-2 text-right text-purple-300 text-xs font-mono font-bold">
+                                {(p.onChainEvolutionLevel || 0).toLocaleString()}
+                            </div>
                         </div>
                     ))}
                  </div>
